@@ -8,6 +8,7 @@ Matches exact UI/UX from reference design:
 - Editable Word List with word chip typo editing, ✦ emphasis toggle, words per phrase (2, 3, 4), and 'Last word italic'
 - Free Offline Local AI (faster-whisper) + optional Groq Whisper integration
 - Video Library & Backend Disk Storage manager
+- Cloud-ready: Supports Render, Railway, Hugging Face Spaces (Docker), Fly.io, or VPS
 """
 
 import os
@@ -68,7 +69,7 @@ FONT_ASS_MAP = {
     "Alex Brush": ("Alex Brush", 0, 0),
 }
 
-# 8 Caption Styles exactly matching Screenshot 2
+# 8 Caption Styles exactly matching reference design
 STYLES = [
     {
         "id": "style_11",
@@ -166,6 +167,106 @@ def get_style_by_id(style_id: str):
             return s
     return STYLES[0]
 
+# Fine-tuned rendering specifications for each style
+STYLE_PROFILES = {
+    "style_11": { # Editorial Hybrid
+        "outline_normal": 1.0,
+        "outline_color_normal": "&H50000000",
+        "shadow_normal": 0,
+        "blur_normal": 1,
+        "blur_active": 2,
+        "scale_y": 108,
+        "emph_font_scale": 1.38,
+        "emph_glow": True,
+        "emph_blur": 6,
+        "all_caps": False,
+    },
+    "style_10": { # Editorial Serif
+        "outline_normal": 1.0,
+        "outline_color_normal": "&H40000000",
+        "shadow_normal": 0,
+        "blur_normal": 1,
+        "blur_active": 3,
+        "scale_y": 100,
+        "emph_font_scale": 1.25,
+        "emph_glow": True,
+        "emph_blur": 5,
+        "all_caps": False,
+    },
+    "style_1": { # Bold Yellow
+        "outline_normal": 3.0,
+        "outline_color_normal": "&H00000000", # solid black outline
+        "shadow_normal": 2.2,
+        "blur_normal": 0,
+        "blur_active": 0,
+        "scale_y": 100,
+        "emph_font_scale": 1.05,
+        "emph_glow": False,
+        "emph_blur": 0,
+        "all_caps": True,
+    },
+    "style_2": { # Cyan Pop
+        "outline_normal": 2.6,
+        "outline_color_normal": "&H00000000",
+        "shadow_normal": 1.8,
+        "blur_normal": 0,
+        "blur_active": 2,
+        "scale_y": 100,
+        "emph_font_scale": 1.05,
+        "emph_glow": False,
+        "emph_blur": 0,
+        "all_caps": False,
+    },
+    "style_3": { # Yellow Tag
+        "outline_normal": 2.2,
+        "outline_color_normal": "&H00000000",
+        "shadow_normal": 1.0,
+        "blur_normal": 0,
+        "blur_active": 1,
+        "scale_y": 100,
+        "emph_font_scale": 1.05,
+        "emph_glow": False,
+        "emph_blur": 0,
+        "all_caps": False,
+    },
+    "style_4": { # Red Impact
+        "outline_normal": 2.5,
+        "outline_color_normal": "&H00000000",
+        "shadow_normal": 2.0,
+        "blur_normal": 0,
+        "blur_active": 3,
+        "scale_y": 100,
+        "emph_font_scale": 1.08,
+        "emph_glow": True,
+        "emph_blur": 4,
+        "all_caps": True,
+    },
+    "style_5": { # Minimalist Mono
+        "outline_normal": 0.8,
+        "outline_color_normal": "&H60000000",
+        "shadow_normal": 0,
+        "blur_normal": 1,
+        "blur_active": 2,
+        "scale_y": 100,
+        "emph_font_scale": 1.25,
+        "emph_glow": False,
+        "emph_blur": 1,
+        "all_caps": False,
+    },
+    "style_6": { # Blue Glow
+        "outline_normal": 2.4,
+        "outline_color_normal": "&H00000000",
+        "shadow_normal": 2.0,
+        "blur_normal": 0,
+        "blur_active": 3,
+        "scale_y": 100,
+        "emph_font_scale": 1.08,
+        "emph_glow": True,
+        "emph_blur": 5,
+        "all_caps": True,
+    }
+}
+
 # Audio extraction & video info
 def extract_audio(video_path: Path, output_audio_path: Path) -> Path:
     ffmpeg = get_ffmpeg_path()
@@ -191,6 +292,7 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
     duration = 12.0
     width = 720
     height = 1280
+    has_audio = False
 
     for line in res.stderr.splitlines():
         if "Duration:" in line:
@@ -206,7 +308,30 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
             if m:
                 width = int(m.group(1))
                 height = int(m.group(2))
-    return {"duration": round(duration, 1), "width": width, "height": height}
+        if "Audio:" in line:
+            has_audio = True
+
+    return {"duration": round(duration, 1), "width": width, "height": height, "has_audio": has_audio}
+
+def ensure_demo_reel_exists():
+    """Generates the 12-second 9:16 demo reel if it does not already exist."""
+    dest = ASSETS_DIR / "demo_reel.mp4"
+    if not dest.exists():
+        ffmpeg = get_ffmpeg_path()
+        cmd = [
+            ffmpeg, "-y",
+            "-f", "lavfi", "-i", "color=c=0x0a0c12:s=720x1280:d=12:r=30",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-vf", r"drawtext=text=CAPTIONIZER DEMO:fontcolor=white@0.2:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2-30,drawtext=text=00\\:00\\:01.000:fontcolor=orange@0.25:fontsize=30:x=(w-text_w)/2:y=(h-text_h)/2+20",
+            "-t", "12",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            str(dest)
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+        except Exception as e:
+            print("Notice: demo reel auto-generation fallback:", e)
 
 # Speech Transcription
 _WHISPER_MODEL = None
@@ -340,7 +465,7 @@ def group_words_into_phrases(
         should_break = len(curr_words) >= target_words_per_phrase or has_punct or time_gap or (i == len(words) - 1)
 
         if should_break and curr_words:
-            # By default make last word emphasized if none is emphasized
+            # Emphasize the last word of phrase if none is emphasized
             if not any(w.get("emphasis") for w in curr_words):
                 curr_words[-1]["emphasis"] = True
             
@@ -384,37 +509,52 @@ def generate_ass(
     output_path: Path,
     style_id: str = "style_11",
     custom_font: Optional[str] = None,
+    casing: Optional[str] = "default",
+    emphasis_font: Optional[str] = None,
     position_pct: int = 80,
     size_pct: int = 100,
     custom_accent: str = "auto",
     video_width: int = 720,
     video_height: int = 1280
 ) -> Path:
+    prof = STYLE_PROFILES.get(style_id, STYLE_PROFILES["style_11"])
     style_info = get_style_by_id(style_id)
     accent_color = style_info["accent"] if custom_accent == "auto" else custom_accent
+    highlight_ass = hex_to_ass_color(accent_color, 0)
 
-    # Reference font sizing
-    base_font_size = int(48 * (size_pct / 100.0))
-    emphasis_font_size = int(66 * (size_pct / 100.0))
-    
+    # Sizing dynamically scaled to resolution height (reference: 1280)
+    scale_factor = (video_height / 1280.0) * (size_pct / 100.0)
+    base_font_size = max(24, int(48 * scale_factor))
+    emph_scale = prof["emph_font_scale"]
+    emphasis_font_size = max(28, int(48 * emph_scale * scale_factor))
+
+    # Font determination
+    font_base_key = custom_font if (custom_font and custom_font != "auto") else style_info["font_base"]
+    if emphasis_font == "same":
+        font_emph_key = font_base_key
+    elif emphasis_font and emphasis_font != "auto":
+        font_emph_key = emphasis_font
+    else:
+        font_emph_key = style_info["font_emphasis"]
+
+    base_font_name, base_bold, base_italic = FONT_ASS_MAP.get(font_base_key, (font_base_key, -1, 0))
+    emph_font_name, emph_bold, emph_italic = FONT_ASS_MAP.get(font_emph_key, (font_emph_key, 0, -1))
+
+    scale_y = prof["scale_y"]
+    outline_val = prof["outline_normal"]
+    outline_col = prof["outline_color_normal"]
+    shadow_val = prof["shadow_normal"]
+    shadow_col = "&H80000000"
+
     # Margin from bottom for Alignment 2 (bottom center)
     ass_margin_v = int((1.0 - (position_pct / 100.0)) * video_height) - int(base_font_size / 2)
     if ass_margin_v < 40: ass_margin_v = 40
     if ass_margin_v > video_height - 80: ass_margin_v = video_height - 80
 
-    highlight_ass = hex_to_ass_color(accent_color, 0)
-    font_base_key = custom_font if custom_font else style_info["font_base"]
-    font_emph_key = style_info["font_emphasis"]
+    emph_outline_col = highlight_ass if prof["emph_glow"] else outline_col
 
-    base_font_name, base_bold, base_italic = FONT_ASS_MAP.get(font_base_key, (font_base_key, -1, 0))
-    emph_font_name, emph_bold, emph_italic = FONT_ASS_MAP.get(font_emph_key, (font_emph_key, 0, -1))
-
-    # ScaleY is 108 for Inter/SF Pro to give authentic condensed punch
-    scale_y = 108 if font_base_key in ["SF Pro Display", "Inter Caption", "Inter", "Montserrat"] else 100
-
-    # Subtle soft outline with blur glow
     header = f"""[Script Info]
-Title: Captionizer Word-by-Word Subtitles
+Title: Caption AI Word-by-Word Subtitles
 ScriptType: v4.00+
 WrapStyle: 0
 ScaledBorderAndShadow: yes
@@ -424,13 +564,16 @@ PlayResY: {video_height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Normal,{base_font_name},{base_font_size},&H00FFFFFF,&H000000FF,&H50000000,&H80000000,{base_bold},{base_italic},0,0,100,{scale_y},1,0,1,1.0,0,2,40,40,{ass_margin_v},1
-Style: Active,{base_font_name},{base_font_size},{highlight_ass},&H000000FF,&H30000000,&H80000000,{base_bold},{base_italic},0,0,103,{scale_y+3},1,0,1,1.2,0,2,40,40,{ass_margin_v},1
-Style: Emphasis,{emph_font_name},{emphasis_font_size},{highlight_ass},&H000000FF,{highlight_ass},&H80000000,{emph_bold},{emph_italic},0,0,100,100,2,0,1,1.8,0,2,40,40,{ass_margin_v},1
+Style: Normal,{base_font_name},{base_font_size},&H00FFFFFF,&H000000FF,{outline_col},{shadow_col},{base_bold},{base_italic},0,0,100,{scale_y},1,0,1,{outline_val},{shadow_val},2,40,40,{ass_margin_v},1
+Style: Active,{base_font_name},{base_font_size},{highlight_ass},&H000000FF,{outline_col},{shadow_col},{base_bold},{base_italic},0,0,103,{scale_y+3},1,0,1,{outline_val+0.3},{shadow_val},2,40,40,{ass_margin_v},1
+Style: Emphasis,{emph_font_name},{emphasis_font_size},{highlight_ass},&H000000FF,{emph_outline_col},{shadow_col},{emph_bold},{emph_italic},0,0,100,100,2,0,1,{outline_val+0.5},{shadow_val},2,40,40,{ass_margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+    # Casing selection
+    eff_casing = casing if (casing and casing != "default") else ("upper" if prof["all_caps"] else "default")
+
     events = []
     for phrase in phrases:
         words = phrase.get("words", [])
@@ -447,16 +590,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 clean_w = w["text"].strip().lstrip(",.;:!?")
                 if not clean_w: continue
 
+                if eff_casing == "upper":
+                    clean_w = clean_w.upper()
+                elif eff_casing == "lower":
+                    clean_w = clean_w.lower()
+                elif eff_casing == "title":
+                    clean_w = clean_w.title()
+
                 if is_curr:
                     if is_emph:
-                        text_chunks.append(f"{{\\rEmphasis\\c{highlight_ass}\\3c{highlight_ass}\\blur6}}{clean_w}{{\\rNormal}}")
+                        if prof["emph_glow"]:
+                            b_r = prof["emph_blur"]
+                            text_chunks.append(f"{{\\rEmphasis\\c{highlight_ass}\\3c{highlight_ass}\\blur{b_r}}}{clean_w}{{\\rNormal}}")
+                        else:
+                            text_chunks.append(f"{{\\rEmphasis\\c{highlight_ass}\\3c{outline_col}\\blur0}}{clean_w}{{\\rNormal}}")
                     else:
-                        text_chunks.append(f"{{\\rActive\\c{highlight_ass}\\blur2}}{clean_w}{{\\rNormal}}")
+                        b_a = prof["blur_active"]
+                        blur_tag = f"\\blur{b_a}" if b_a > 0 else "\\blur0"
+                        text_chunks.append(f"{{\\rActive\\c{highlight_ass}{blur_tag}}}{clean_w}{{\\rNormal}}")
                 else:
                     if is_emph:
-                        text_chunks.append(f"{{\\rEmphasis\\alpha&H60&\\blur2}}{clean_w}{{\\rNormal}}")
+                        if prof["emph_glow"]:
+                            text_chunks.append(f"{{\\rEmphasis\\alpha&H60&\\blur2}}{clean_w}{{\\rNormal}}")
+                        else:
+                            text_chunks.append(f"{{\\rEmphasis\\alpha&H60&\\3c{outline_col}}}{clean_w}{{\\rNormal}}")
                     else:
-                        text_chunks.append(f"{{\\alpha&H60&\\blur2}}{clean_w}{{\\alpha&H00&}}")
+                        text_chunks.append(f"{{\\alpha&H60&}}{clean_w}{{\\alpha&H00&}}")
 
             full_line = " ".join(text_chunks)
             events.append(f"Dialogue: 0,{start_t},{end_t},Normal,,0,0,0,,{full_line}")
@@ -469,6 +628,9 @@ def burn_captions_to_video(video_path: Path, ass_path: Path, output_path: Path) 
     ffmpeg = get_ffmpeg_path()
     rel_ass = f"outputs/{ass_path.name}"
     
+    info = get_video_info(video_path)
+    has_audio = info.get("has_audio", False)
+
     cmd = [
         ffmpeg, "-y",
         "-i", str(video_path.resolve()),
@@ -476,9 +638,13 @@ def burn_captions_to_video(video_path: Path, ass_path: Path, output_path: Path) 
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "22",
-        "-c:a", "copy",
-        str(output_path.resolve())
     ]
+    if has_audio:
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+    else:
+        cmd.append("-an")
+
+    cmd.append(str(output_path.resolve()))
 
     res = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=True, text=True)
     if res.returncode != 0:
@@ -486,7 +652,7 @@ def burn_captions_to_video(video_path: Path, ass_path: Path, output_path: Path) 
     return output_path
 
 # FASTAPI APP
-app = FastAPI(title="Captionizer Studio", version="4.0.0")
+app = FastAPI(title="Caption AI", version="4.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -517,6 +683,8 @@ class RenderRequest(BaseModel):
     words: Optional[List[Dict[str, Any]]] = None
     style_id: str = "style_11"
     custom_font: Optional[str] = None
+    casing: Optional[str] = "default"
+    emphasis_font: Optional[str] = None
     position_pct: int = 80
     size_pct: int = 100
     accent_color: str = "auto"
@@ -549,9 +717,9 @@ async def get_styles():
 
 @app.get("/api/demo")
 async def get_demo():
+    ensure_demo_reel_exists()
     demo_video = ASSETS_DIR / "demo_reel.mp4"
     if not demo_video.exists():
-        # Fallback to test if not generated
         demo_video = ASSETS_DIR / "preview_bg.jpg"
     
     words, phrases = get_demo_words_and_phrases(words_per_phrase=3)
@@ -729,7 +897,10 @@ async def transcribe_video(req: TranscribeRequest):
         video_path = source_files[0]
         audio_path = UPLOADS_DIR / f"{req.task_id}_audio.mp3"
         if not audio_path.exists():
-            extract_audio(video_path, audio_path)
+            try:
+                extract_audio(video_path, audio_path)
+            except Exception:
+                pass
         info = get_video_info(video_path)
         task = {
             "task_id": req.task_id,
@@ -750,15 +921,15 @@ async def transcribe_video(req: TranscribeRequest):
     
     # 1. Groq if configured
     groq_key = req.groq_api_key or CONFIG.get("groq_api_key")
-    if groq_key:
+    if groq_key and audio_path.exists():
         try:
             print("Transcribing via Groq Whisper...")
             words = transcribe_audio_groq(audio_path, api_key=groq_key)
         except Exception as e:
-            print("Groq transcription failed, trying local whisper:", e)
+            print("Groq transcription notice:", e)
 
     # 2. Local AI faster-whisper
-    if not words:
+    if not words and audio_path.exists():
         try:
             print("Transcribing via local faster-whisper...")
             words = transcribe_audio_local(audio_path)
@@ -783,6 +954,7 @@ async def transcribe_video(req: TranscribeRequest):
 @app.post("/api/render")
 async def render_video(req: RenderRequest):
     if req.task_id == "demo_reel":
+        ensure_demo_reel_exists()
         video_path = ASSETS_DIR / "demo_reel.mp4"
         w, h = 720, 1280
     else:
@@ -809,6 +981,8 @@ async def render_video(req: RenderRequest):
         output_path=ass_path,
         style_id=req.style_id,
         custom_font=req.custom_font,
+        casing=req.casing,
+        emphasis_font=req.emphasis_font,
         position_pct=req.position_pct,
         size_pct=req.size_pct,
         custom_accent=req.accent_color,
@@ -855,7 +1029,7 @@ STUDIO_HTML = """<!doctype html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Captionizer — Word-by-word animated captions with Groq Whisper & FFmpeg</title>
+  <title>Caption AI — Word-by-word animated captions with Groq Whisper & FFmpeg</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -880,6 +1054,18 @@ STUDIO_HTML = """<!doctype html>
       --success: #10B981;
       --r: 8px;
       --r-lg: 14px;
+    }
+
+    [data-theme="light"] {
+      --bg: #F4F6F9;
+      --surface: #FFFFFF;
+      --surface-2: #EDF2F7;
+      --surface-hover: #E2E8F0;
+      --border: #E2E8F0;
+      --border-strong: #CBD5E1;
+      --text: #0F172A;
+      --text-2: #475569;
+      --text-3: #94A3B8;
     }
 
     /* Embedded Typography */
@@ -941,7 +1127,7 @@ STUDIO_HTML = """<!doctype html>
     .brand-title {
       font-size: 17px;
       font-weight: 800;
-      color: #fff;
+      color: var(--text);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1328,7 +1514,7 @@ STUDIO_HTML = """<!doctype html>
     .panel-card-title {
       font-size: 13px;
       font-weight: 700;
-      color: #fff;
+      color: var(--text);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -1367,7 +1553,7 @@ STUDIO_HTML = """<!doctype html>
     .drop-title {
       font-size: 15px;
       font-weight: 700;
-      color: #fff;
+      color: var(--text);
     }
     .drop-sub {
       font-size: 12px;
@@ -1410,7 +1596,7 @@ STUDIO_HTML = """<!doctype html>
     }
     .word-list-title {
       font-weight: 700;
-      color: #fff;
+      color: var(--text);
       letter-spacing: 0.04em;
       text-transform: uppercase;
     }
@@ -1502,7 +1688,7 @@ STUDIO_HTML = """<!doctype html>
       font-family: monospace;
     }
     .phrase-time-btn:hover {
-      color: #fff;
+      color: var(--text);
     }
     .word-chips-wrap {
       display: flex;
@@ -1511,13 +1697,13 @@ STUDIO_HTML = """<!doctype html>
       align-items: center;
     }
     .word-chip {
-      background: #1C2331;
-      border: 1px solid #283348;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
       border-radius: 7px;
       padding: 4px 9px;
       font-size: 13.5px;
       font-weight: 600;
-      color: #E2E8F0;
+      color: var(--text);
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -1525,7 +1711,7 @@ STUDIO_HTML = """<!doctype html>
       transition: all 0.12s;
     }
     .word-chip:hover {
-      border-color: #4A5568;
+      border-color: var(--accent);
     }
     .word-chip.is-emph {
       background: rgba(226, 88, 34, 0.15);
@@ -1577,7 +1763,7 @@ STUDIO_HTML = """<!doctype html>
       justify-content: space-between;
       font-size: 12.5px;
       font-weight: 700;
-      color: #fff;
+      color: var(--text);
       padding: 0 4px;
     }
     .hero-badge {
@@ -1682,6 +1868,24 @@ STUDIO_HTML = """<!doctype html>
     }
     .color-circle.dark-circle.is-active::after {
       background: #fff;
+    }
+
+    .studio-select {
+      width: 100%;
+      height: 38px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 0 10px;
+      outline: none;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .studio-select:focus {
+      border-color: var(--accent);
     }
 
     /* Giant CTA Buttons */
@@ -1800,7 +2004,7 @@ STUDIO_HTML = """<!doctype html>
         <div class="brand-mark">C</div>
         <div>
           <div class="brand-title">
-            <span>Captionizer</span>
+            <span>Caption AI</span>
             <span class="badge-pill">EDITORIAL HYBRID</span>
           </div>
           <div class="brand-sub">Word-by-word animated captions with Groq Whisper & FFmpeg</div>
@@ -2026,6 +2230,48 @@ STUDIO_HTML = """<!doctype html>
           <input type="range" class="slider-track" id="sizeSlider" min="40" max="120" value="76" />
         </div>
 
+        <!-- Typography & Font Format Card -->
+        <div class="panel-card">
+          <div class="panel-card-title">
+            <span style="display:flex; align-items:center; gap:6px;">🔤 Font Format & Typography</span>
+            <span id="fontFormatBadge" class="badge-pill">Style Default</span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+            <div>
+              <label style="font-size:11px; color:var(--text-3); display:block; margin-bottom:4px; font-weight:600;">BASE FONT</label>
+              <select id="baseFontSelect" class="studio-select">
+                <option value="auto">Auto (From Style)</option>
+                <option value="Inter Caption">Inter ExtraBold</option>
+                <option value="SF Pro Display">SF Pro Display</option>
+                <option value="Montserrat">Montserrat ExtraBold</option>
+                <option value="Poppins">Poppins ExtraBold</option>
+                <option value="PP Editorial New">PP Editorial New</option>
+                <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--text-3); display:block; margin-bottom:4px; font-weight:600;">TEXT CASING</label>
+              <select id="casingSelect" class="studio-select">
+                <option value="default">Original (Speech)</option>
+                <option value="upper">UPPERCASE (ALL CAPS)</option>
+                <option value="title">Title Case</option>
+                <option value="lower">lowercase</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;">
+            <label style="font-size:11px; color:var(--text-3); display:block; margin-bottom:4px; font-weight:600;">EMPHASIS FONT (✦ WORDS)</label>
+            <select id="emphFontSelect" class="studio-select">
+              <option value="auto">Auto (Instrument Serif Italic)</option>
+              <option value="Instrument Serif">Instrument Serif (Italic Glow)</option>
+              <option value="Alex Brush">Alex Brush (Calligraphy Script)</option>
+              <option value="same">Same as Base Font (Color Glow Only)</option>
+            </select>
+          </div>
+        </div>
+
         <!-- Highlight Color Card -->
         <div class="panel-card">
           <div class="panel-card-title">
@@ -2041,7 +2287,7 @@ STUDIO_HTML = """<!doctype html>
             <button class="color-circle" style="background:#F43F5E;" data-c="#F43F5E"></button>
             <button class="color-circle" style="background:#A855F7;" data-c="#A855F7"></button>
             <button class="color-circle" style="background:#FB7185;" data-c="#FB7185"></button>
-            <label class="color-circle dark-circle" style="background:var(--surface-2);color:#fff;font-size:14px;cursor:pointer;">
+            <label class="color-circle dark-circle" style="background:var(--surface-2);color:var(--text);font-size:14px;cursor:pointer;">
               +
               <input type="color" id="customColorInput" style="display:none;" value="#FFFFFF" />
             </label>
@@ -2109,11 +2355,11 @@ STUDIO_HTML = """<!doctype html>
         <button id="closeKeysBtn" class="player-mini-btn" style="font-size:16px;">✕</button>
       </div>
       <p style="font-size:12px; color:var(--text-3);">
-        Enter your free Groq API Key to enable instant cloud speech transcription (<1s for 60s video). If omitted, Captionizer uses offline local faster-whisper.
+        Enter your free Groq API Key to enable instant cloud speech transcription (&lt;1s for 60s video). If omitted, Captionizer uses offline local faster-whisper.
       </p>
       <div>
         <label style="font-size:11px; color:var(--text-3); margin-bottom:4px; display:block;">Groq API Key (gsk_...)</label>
-        <input type="password" id="groqKeyInput" placeholder="gsk_..." style="width:100%;height:38px;padding:0 12px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;color:#fff;outline:none;" />
+        <input type="password" id="groqKeyInput" placeholder="gsk_..." style="width:100%;height:38px;padding:0 12px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;color:var(--text);outline:none;" />
       </div>
       <div style="display:flex; justify-content:flex-end; gap:8px;">
         <button id="clearKeyBtn" class="btn-top">Clear</button>
@@ -2147,6 +2393,9 @@ STUDIO_HTML = """<!doctype html>
     const state = {
       activeTab: "tab-transcript",
       style: "style_11",
+      customFont: "auto",
+      casing: "default",
+      emphasisFont: "auto",
       position: 80,
       size: 76,
       accent: "#FFFFFF",
@@ -2188,7 +2437,8 @@ STUDIO_HTML = """<!doctype html>
       .then(data => {
         state.styles = data.styles;
         renderStylesGrid();
-      });
+      })
+      .catch(e => console.error("Styles error:", e));
 
     function renderStylesGrid() {
       const grid = document.getElementById("styleGrid");
@@ -2208,6 +2458,11 @@ STUDIO_HTML = """<!doctype html>
           state.style = s.id;
           document.querySelectorAll(".style-card").forEach(c => c.classList.remove("is-active"));
           div.classList.add("is-active");
+          if (s.accent) {
+            setColor(s.accent);
+          }
+          const badge = document.getElementById("fontFormatBadge");
+          if (badge) badge.textContent = s.name;
           updateLiveOverlay();
         };
         grid.appendChild(div);
@@ -2217,7 +2472,7 @@ STUDIO_HTML = """<!doctype html>
     // Video Player Functions
     function togglePlay() {
       if (userVideo.paused) {
-        userVideo.play();
+        userVideo.play().catch(() => {});
         playBtn.textContent = "⏸";
         playOverlayCircle.style.display = "none";
       } else {
@@ -2232,7 +2487,7 @@ STUDIO_HTML = """<!doctype html>
 
     replayBtn.onclick = () => {
       userVideo.currentTime = 0;
-      userVideo.play();
+      userVideo.play().catch(() => {});
       playBtn.textContent = "⏸";
       playOverlayCircle.style.display = "none";
     };
@@ -2316,7 +2571,13 @@ STUDIO_HTML = """<!doctype html>
       const effAccent = (state.accent === "#FFFFFF" && curStyle.accent && curStyle.accent !== "#FFFFFF") ? curStyle.accent : state.accent;
       const baseFs = Math.round(state.size * 0.42);
       const emphFs = Math.round(state.size * 0.58);
-      const baseFont = curStyle.font_base || 'Inter Caption';
+      
+      const effBaseFont = (state.customFont && state.customFont !== "auto") ? state.customFont : (curStyle.font_base || 'Inter Caption');
+      const effEmphFont = (state.emphasisFont === 'same') ? effBaseFont : ((state.emphasisFont && state.emphasisFont !== "auto") ? state.emphasisFont : (curStyle.font_emphasis || 'Instrument Serif'));
+      
+      // Determine casing
+      const isStyleAllCaps = ['style_1', 'style_4', 'style_6'].includes(state.style);
+      const effCasing = (state.casing && state.casing !== "default") ? state.casing : (isStyleAllCaps ? 'upper' : 'default');
 
       liveCaptionOverlay.style.top = state.position + "%";
       liveCaptionOverlay.style.display = "flex";
@@ -2324,21 +2585,98 @@ STUDIO_HTML = """<!doctype html>
       liveCaptionOverlay.innerHTML = activePhrase.words.map(w => {
         const isCurr = (w.id === activeWordId);
         const isEmph = Boolean(w.emphasis);
+        
+        let wordText = w.text;
+        if (effCasing === "upper") {
+          wordText = wordText.toUpperCase();
+        } else if (effCasing === "lower") {
+          wordText = wordText.toLowerCase();
+        } else if (effCasing === "title") {
+          wordText = wordText.replace(/\\w\\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+        }
 
+        // 1. Editorial Hybrid
         if (state.style === "style_11") {
-          // Editorial Hybrid
           if (isEmph) {
-            return `<span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; font-size:${emphFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.65}; text-shadow:${isCurr ? '0 0 16px rgba(255,255,255,0.95), 0 0 32px rgba(255,255,255,0.75), 0 2px 8px rgba(0,0,0,0.6)' : '0 0 8px rgba(255,255,255,0.45)'}; transform:scaleY(1.0);">${w.text}</span>`;
+            return `<span style="font-family:'${effEmphFont}', Georgia, serif; font-style:italic; font-weight:400; font-size:${emphFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.65}; text-shadow:${isCurr ? `0 0 16px ${effAccent}, 0 0 32px ${effAccent}, 0 2px 8px rgba(0,0,0,0.6)` : `0 0 8px ${effAccent}`}; transform:scaleY(1.0);">${wordText}</span>`;
           }
-          return `<span style="font-family:'${baseFont}', -apple-system, sans-serif; font-weight:800; font-size:${baseFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.45}; transform:scaleY(1.08); text-shadow:0 3px 14px rgba(0,0,0,0.6);">${w.text}</span>`;
+          return `<span style="font-family:'${effBaseFont}', -apple-system, sans-serif; font-weight:800; font-size:${baseFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.45}; transform:scaleY(1.08); text-shadow:0 3px 14px rgba(0,0,0,0.6);">${wordText}</span>`;
         }
 
+        // 2. Editorial Serif
         if (state.style === "style_10") {
-          return `<span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; font-size:${emphFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.55}; text-shadow:0 0 14px rgba(255,255,255,0.8);">${w.text}</span>`;
+          return `<span style="font-family:'${effEmphFont}', Georgia, serif; font-style:italic; font-weight:400; font-size:${emphFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.55}; text-shadow:0 0 14px ${isCurr ? effAccent : 'rgba(255,255,255,0.7)'};">${wordText}</span>`;
         }
 
-        return `<span style="font-family:'${baseFont}', sans-serif; font-weight:800; font-size:${baseFs}px; color:${(isCurr || isEmph) ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.45}; text-shadow:0 2px 8px rgba(0,0,0,0.7);">${w.text}</span>`;
+        // 3. Bold Yellow
+        if (state.style === "style_1") {
+          const color = (isCurr || isEmph) ? effAccent : '#FFFFFF';
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:900; font-size:${baseFs + 2}px; color:${color}; -webkit-text-stroke:2px #000; text-shadow:0 3px 6px #000; opacity:${isCurr ? 1 : 0.6};">${wordText}</span>`;
+        }
+
+        // 4. Cyan Pop
+        if (state.style === "style_2") {
+          const color = (isCurr || isEmph) ? effAccent : '#FFFFFF';
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:800; font-size:${baseFs}px; color:${color}; -webkit-text-stroke:1.6px #000; text-shadow:${isCurr ? `0 0 16px ${effAccent}, 0 2px 6px #000` : '0 2px 6px #000'}; opacity:${isCurr ? 1 : 0.55};">${wordText}</span>`;
+        }
+
+        // 5. Yellow Tag
+        if (state.style === "style_3") {
+          if (isCurr || isEmph) {
+            return `<mark style="background:${effAccent}; color:#000; font-family:'${effBaseFont}', sans-serif; font-weight:900; font-size:${baseFs}px; padding:2px 8px; border-radius:6px; box-shadow:0 3px 10px rgba(0,0,0,0.5);">${wordText}</mark>`;
+          }
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:800; font-size:${baseFs}px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.7); opacity:0.6;">${wordText}</span>`;
+        }
+
+        // 6. Red Impact
+        if (state.style === "style_4") {
+          const color = (isCurr || isEmph) ? effAccent : '#FFFFFF';
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:900; font-size:${baseFs + 2}px; color:${color}; -webkit-text-stroke:1.8px #000; text-shadow:${isCurr ? `0 0 18px ${effAccent}, 0 2px 8px #000` : '0 2px 8px #000'}; opacity:${isCurr ? 1 : 0.6};">${wordText}</span>`;
+        }
+
+        // 7. Minimalist Mono
+        if (state.style === "style_5") {
+          if (isEmph && effEmphFont !== effBaseFont) {
+            return `<span style="font-family:'${effEmphFont}', serif; font-style:italic; font-size:${emphFs - 4}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.55};">${wordText}</span>`;
+          }
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:700; font-size:${baseFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.45};">${wordText}</span>`;
+        }
+
+        // 8. Blue Glow
+        if (state.style === "style_6") {
+          const color = (isCurr || isEmph) ? effAccent : '#FFFFFF';
+          return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:900; font-size:${baseFs + 1}px; color:${color}; -webkit-text-stroke:1.8px #000; text-shadow:${isCurr ? `0 0 20px ${effAccent}, 0 2px 8px #000` : '0 2px 8px #000'}; opacity:${isCurr ? 1 : 0.6};">${wordText}</span>`;
+        }
+
+        // Default fallback
+        return `<span style="font-family:'${effBaseFont}', sans-serif; font-weight:800; font-size:${baseFs}px; color:${isCurr ? effAccent : '#fff'}; opacity:${isCurr ? 1 : 0.45}; text-shadow:0 2px 8px rgba(0,0,0,0.7);">${wordText}</span>`;
       }).join(" ");
+    }
+
+    // Typography & Font Format Controls
+    const baseFontSelect = document.getElementById("baseFontSelect");
+    const casingSelect = document.getElementById("casingSelect");
+    const emphFontSelect = document.getElementById("emphFontSelect");
+
+    if (baseFontSelect) {
+      baseFontSelect.onchange = (e) => {
+        state.customFont = e.target.value;
+        updateLiveOverlay();
+      };
+    }
+
+    if (casingSelect) {
+      casingSelect.onchange = (e) => {
+        state.casing = e.target.value;
+        updateLiveOverlay();
+      };
+    }
+
+    if (emphFontSelect) {
+      emphFontSelect.onchange = (e) => {
+        state.emphasisFont = e.target.value;
+        updateLiveOverlay();
+      };
     }
 
     // Drag to reposition
@@ -2490,7 +2828,7 @@ STUDIO_HTML = """<!doctype html>
 
     window.playPhrase = (startTime) => {
       userVideo.currentTime = startTime;
-      userVideo.play();
+      userVideo.play().catch(() => {});
     };
 
     // Video Upload Handlers
@@ -2627,25 +2965,38 @@ STUDIO_HTML = """<!doctype html>
             task_id: state.task.task_id,
             phrases: state.phrases,
             style_id: state.style,
+            custom_font: (state.customFont && state.customFont !== "auto") ? state.customFont : null,
+            casing: state.casing || "default",
+            emphasis_font: (state.emphasisFont && state.emphasisFont !== "auto") ? state.emphasisFont : null,
             position_pct: state.position,
             size_pct: Math.round((state.size / 76) * 100),
             accent_color: state.accent
           })
         });
         const data = await res.json();
-        document.getElementById("dlMp4Btn").href = data.video_url;
-        document.getElementById("dlSrtBtn").href = data.srt_url;
-        document.getElementById("dlAssBtn").href = data.ass_url;
+        const baseName = state.task.filename ? state.task.filename.replace(/\\.[^/.]+$/, "") : "captioned";
+        const dlMp4 = document.getElementById("dlMp4Btn");
+        dlMp4.href = data.video_url;
+        dlMp4.download = `${baseName}_captioned.mp4`;
+
+        const dlSrt = document.getElementById("dlSrtBtn");
+        dlSrt.href = data.srt_url;
+        dlSrt.download = `${baseName}.srt`;
+
+        const dlAss = document.getElementById("dlAssBtn");
+        dlAss.href = data.ass_url;
+        dlAss.download = `${baseName}.ass`;
+
         document.getElementById("renderResultBox").style.display = "flex";
         cta.disabled = false;
         cta.textContent = "✨ Render Full Captioned Video (FFmpeg)";
 
-        // Play burned video directly with no duplicate overlay
+        // Play burned video directly with zero duplicate overlay
         state.isRendered = true;
         liveCaptionOverlay.style.display = "none";
         liveCaptionOverlay.innerHTML = "";
         userVideo.src = data.video_url;
-        userVideo.play();
+        userVideo.play().catch(() => {});
       } catch (err) {
         alert("Render error: " + err.message);
         cta.disabled = false;
@@ -2785,7 +3136,7 @@ STUDIO_HTML = """<!doctype html>
       }
     });
 
-    // Automatically load demo reel on first start so canvas is immediately alive!
+    // Automatically load demo reel on first start so canvas is immediately active!
     document.getElementById("tryDemoBtn").click();
   </script>
 </body>
@@ -2808,13 +3159,20 @@ def find_available_port(preferred_port: int = 8080) -> int:
     return preferred_port
 
 if __name__ == "__main__":
-    port = find_available_port(8080)
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", str(find_available_port(8080))))
     url = f"http://127.0.0.1:{port}"
     print("=" * 60)
-    print(f"Captionizer Studio is launching on: {url}")
+    print(f"Captionizer Studio is launching on: {url} (Host: {host}:{port})")
     print("=" * 60)
     
-    import threading
-    threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    # Auto-open browser if running locally on desktop
+    is_cloud = bool(os.environ.get("PORT") or os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("SPACE_ID"))
+    if not is_cloud:
+        import threading
+        try:
+            threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+        except Exception:
+            pass
     
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
